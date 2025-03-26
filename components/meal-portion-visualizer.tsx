@@ -1,16 +1,26 @@
 "use client"
 
-import {useState} from "react"
+import {useState, useEffect} from "react"
 import {zodResolver} from "@hookform/resolvers/zod"
 import {useForm} from "react-hook-form"
 import {toast} from "sonner"
 import {z} from "zod"
-import {Card, CardContent, CardFooter, CardHeader, CardTitle} from "@/components/ui/card"
+import {Card, CardContent, CardHeader, CardTitle} from "@/components/ui/card"
 import {Form, FormControl, FormField, FormItem, FormLabel, FormMessage} from "@/components/ui/form"
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select"
 import {Button} from "@/components/ui/button"
-import {Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter} from "@/components/ui/dialog"
-import {X} from "lucide-react"
+import {Dialog, DialogContent, DialogHeader, DialogTitle} from "@/components/ui/dialog"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {RefreshCw} from "lucide-react"
 import {foodData, type FoodItem, type PortionSize} from "@/lib/data"
 import PortionComparison from "./portion-comparison"
 
@@ -37,6 +47,7 @@ export default function MealPortionVisualizer() {
     const [selectedFood, setSelectedFood] = useState<FoodItem>(defaultFood)
     const [selectedPortion, setSelectedPortion] = useState<PortionSize>(defaultPortion)
     const [isDialogOpen, setIsDialogOpen] = useState(false)
+    const [isResetDialogOpen, setIsResetDialogOpen] = useState(false)
 
     const form = useForm<FormValues>({
         resolver: zodResolver(formSchema),
@@ -46,12 +57,30 @@ export default function MealPortionVisualizer() {
         },
     })
 
+    // Watch for food type changes and update portion size accordingly
+    const currentFoodType = form.watch("foodType")
+
+    useEffect(() => {
+        // When food type changes, update the portion size to the first available option
+        const newFood = foodData.find((f) => f.id === currentFoodType)
+        if (newFood && newFood.portions.length > 0) {
+            const firstPortionId = newFood.portions[0].id
+            form.setValue("portionSize", firstPortionId)
+        }
+    }, [currentFoodType, form])
+
     function onSubmit(data: FormValues) {
         const food = foodData.find((f) => f.id === data.foodType)
-        if (!food) return
+        if (!food) {
+            toast.error("Invalid food type selected")
+            return
+        }
 
         const portion = food.portions.find((p) => p.id === data.portionSize)
-        if (!portion) return
+        if (!portion) {
+            toast.error("Invalid portion size selected")
+            return
+        }
 
         setSelectedFood(food)
         setSelectedPortion(portion)
@@ -62,20 +91,18 @@ export default function MealPortionVisualizer() {
         })
     }
 
-    function resetVisualization() {
-        toast("Visualization reset", {
-            description: "Default values restored",
-            action: {
-                label: "Undo",
-                onClick: () => {
-                    form.setValue("foodType", selectedFood?.id || "")
-                    form.setValue("portionSize", selectedPortion?.id || "")
-                    setIsDialogOpen(true)
-                    toast.success("Previous selection restored")
-                },
-            },
-        })
+    // Store the current state before reset for potential undo
+    const [previousFood, setPreviousFood] = useState<FoodItem | null>(null)
+    const [previousPortion, setPreviousPortion] = useState<PortionSize | null>(null)
 
+    function openResetDialog() {
+        // Store current selections for potential undo
+        setPreviousFood(selectedFood)
+        setPreviousPortion(selectedPortion)
+        setIsResetDialogOpen(true)
+    }
+
+    function resetVisualization() {
         form.reset({
             foodType: DEFAULT_FOOD_TYPE,
             portionSize: DEFAULT_PORTION_SIZE,
@@ -83,11 +110,33 @@ export default function MealPortionVisualizer() {
 
         setSelectedFood(defaultFood)
         setSelectedPortion(defaultPortion)
+
+        toast("Settings reset to defaults", {
+            description: "Default food and portion size restored",
+            action: {
+                label: "Undo",
+                onClick: () => {
+                    if (previousFood && previousPortion) {
+                        form.setValue("foodType", previousFood.id)
+                        form.setValue("portionSize", previousPortion.id)
+                        setSelectedFood(previousFood)
+                        setSelectedPortion(previousPortion)
+                        toast.success("Previous selection restored")
+                    }
+                },
+            },
+        })
     }
 
-    function closeDialog() {
-        setIsDialogOpen(false)
-    }
+    // Get the current food object based on the selected food type
+    const currentFood = foodData.find((f) => f.id === currentFoodType)
+
+    // Validate that the current portion size exists for the current food
+    const currentPortionSize = form.watch("portionSize")
+    const isValidPortionSize = currentFood?.portions.some((p) => p.id === currentPortionSize)
+
+    // Check if current selection is different from defaults
+    const isDefaultSelection = currentFoodType === DEFAULT_FOOD_TYPE && currentPortionSize === DEFAULT_PORTION_SIZE
 
     return (
         <div className="max-w-3xl mx-auto">
@@ -105,18 +154,8 @@ export default function MealPortionVisualizer() {
                                     <FormItem>
                                         <FormLabel>Food Type</FormLabel>
                                         <FormControl>
-                                            <Select
-                                                onValueChange={(value) => {
-                                                    field.onChange(value)
-                                                    // When food type changes, set portion to first available option
-                                                    const newFood = foodData.find((f) => f.id === value)
-                                                    if (newFood && newFood.portions.length > 0) {
-                                                        form.setValue("portionSize", newFood.portions[0].id)
-                                                    }
-                                                }}
-                                                value={field.value}
-                                                defaultValue={DEFAULT_FOOD_TYPE}
-                                            >
+                                            <Select onValueChange={field.onChange} value={field.value}
+                                                    defaultValue={DEFAULT_FOOD_TYPE}>
                                                 <SelectTrigger>
                                                     <SelectValue/>
                                                 </SelectTrigger>
@@ -147,13 +186,11 @@ export default function MealPortionVisualizer() {
                                                     <SelectValue/>
                                                 </SelectTrigger>
                                                 <SelectContent>
-                                                    {foodData
-                                                        .find((f) => f.id === form.watch("foodType"))
-                                                        ?.portions.map((portion) => (
-                                                            <SelectItem key={portion.id} value={portion.id}>
-                                                                {portion.size}
-                                                            </SelectItem>
-                                                        ))}
+                                                    {currentFood?.portions.map((portion) => (
+                                                        <SelectItem key={portion.id} value={portion.id}>
+                                                            {portion.size}
+                                                        </SelectItem>
+                                                    ))}
                                                 </SelectContent>
                                             </Select>
                                         </FormControl>
@@ -162,19 +199,35 @@ export default function MealPortionVisualizer() {
                                 )}
                             />
 
-                            <Button type="submit" className="w-full">
-                                Visualize Portion
-                            </Button>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <Button type="submit" className="flex-1" disabled={!isValidPortionSize}>
+                                    Visualize Portion
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={openResetDialog}
+                                    className="sm:w-10"
+                                    title="Reset to defaults"
+                                    disabled={isDefaultSelection}
+                                >
+                                    <RefreshCw className="h-4 w-4"/>
+                                    <span className="sr-only">Reset to defaults</span>
+                                </Button>
+                            </div>
+
+                            {!isValidPortionSize && (
+                                <p className="text-sm text-destructive text-center">
+                                    Please select a valid portion size for {currentFood?.name}
+                                </p>
+                            )}
                         </form>
                     </Form>
                 </CardContent>
-                <CardFooter className="flex justify-end">
-                    <Button variant="outline" onClick={resetVisualization}>
-                        Reset
-                    </Button>
-                </CardFooter>
             </Card>
 
+            {/* Visualization Dialog */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogContent className="sm:max-w-[700px] bg-background text-foreground">
                     <DialogHeader>
@@ -186,14 +239,36 @@ export default function MealPortionVisualizer() {
                         <PortionComparison food={selectedFood} portion={selectedPortion}/>}
 
                     {/* Mobile-friendly close button at the bottom */}
-                    <DialogFooter className="sm:hidden mt-4 flex justify-center">
-                        <Button onClick={closeDialog} className="w-full" variant="secondary">
-                            <X className="h-4 w-4 mr-2"/>
-                            Close
+                    <div className="sm:hidden mt-6 pb-2">
+                        <Button onClick={() => setIsDialogOpen(false)} className="w-full">
+                            Close Visualization
                         </Button>
-                    </DialogFooter>
+                    </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Reset Confirmation Dialog */}
+            <AlertDialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Reset to defaults?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will reset your food and portion size selections to the default values. Your current
+                            selections will
+                            be lost.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={resetVisualization}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            Reset
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }
